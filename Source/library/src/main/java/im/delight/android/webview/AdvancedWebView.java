@@ -1,21 +1,15 @@
 package im.delight.android.webview;
 
-/**
- * Copyright 2015 delight.im <info@delight.im>
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+/*
+ * Android-AdvancedWebView (https://github.com/delight-im/Android-AdvancedWebView)
+ * Copyright (c) delight.im (https://www.delight.im/)
+ * Licensed under the MIT License (https://opensource.org/licenses/MIT)
  */
 
+import android.view.ViewGroup;
+import android.app.DownloadManager;
+import android.app.DownloadManager.Request;
+import android.os.Environment;
 import android.webkit.CookieManager;
 import java.util.Arrays;
 import android.content.pm.ApplicationInfo;
@@ -27,6 +21,7 @@ import android.view.KeyEvent;
 import android.webkit.ClientCertRequest;
 import android.webkit.HttpAuthHandler;
 import android.webkit.SslErrorHandler;
+import android.webkit.URLUtil;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.os.Message;
@@ -66,14 +61,15 @@ import java.util.Map;
 @SuppressWarnings("deprecation")
 public class AdvancedWebView extends WebView {
 
-	public static interface Listener {
-		public void onPageStarted(String url, Bitmap favicon);
-		public void onPageFinished(String url);
-		public void onPageError(int errorCode, String description, String failingUrl);
-		public void onDownloadRequested(String url, String userAgent, String contentDisposition, String mimetype, long contentLength);
-		public void onExternalPageRequest(String url);
+	public interface Listener {
+		void onPageStarted(String url, Bitmap favicon);
+		void onPageFinished(String url);
+		void onPageError(int errorCode, String description, String failingUrl);
+		void onDownloadRequested(String url, String suggestedFilename, String mimeType, long contentLength, String contentDisposition, String userAgent);
+		void onExternalPageRequest(String url);
 	}
 
+	public static final String PACKAGE_NAME_DOWNLOAD_MANAGER = "com.android.providers.downloads";
 	protected static final int REQUEST_CODE_FILE_PICKER = 51426;
 	protected static final String DATABASES_SUB_FOLDER = "/databases";
 	protected static final String LANGUAGE_DEFAULT_ISO3 = "eng";
@@ -94,6 +90,7 @@ public class AdvancedWebView extends WebView {
 	protected WebViewClient mCustomWebViewClient;
 	protected WebChromeClient mCustomWebChromeClient;
 	protected boolean mGeolocationEnabled;
+	protected String mUploadableFileTypes = "*/*";
 	protected final Map<String, String> mHttpHeaders = new HashMap<String, String>();
 
 	public AdvancedWebView(Context context) {
@@ -184,6 +181,52 @@ public class AdvancedWebView extends WebView {
 		getSettings().setGeolocationDatabasePath(activity.getFilesDir().getPath());
 	}
 
+	public void setUploadableFileTypes(final String mimeType) {
+		mUploadableFileTypes = mimeType;
+	}
+
+	/**
+	 * Loads and displays the provided HTML source text
+	 *
+	 * @param html the HTML source text to load
+	 */
+	public void loadHtml(final String html) {
+		loadHtml(html, null);
+	}
+
+	/**
+	 * Loads and displays the provided HTML source text
+	 *
+	 * @param html the HTML source text to load
+	 * @param baseUrl the URL to use as the page's base URL
+	 */
+	public void loadHtml(final String html, final String baseUrl) {
+		loadHtml(html, baseUrl, null);
+	}
+
+	/**
+	 * Loads and displays the provided HTML source text
+	 *
+	 * @param html the HTML source text to load
+	 * @param baseUrl the URL to use as the page's base URL
+	 * @param historyUrl the URL to use for the page's history entry
+	 */
+	public void loadHtml(final String html, final String baseUrl, final String historyUrl) {
+		loadHtml(html, baseUrl, historyUrl, "utf-8");
+	}
+
+	/**
+	 * Loads and displays the provided HTML source text
+	 *
+	 * @param html the HTML source text to load
+	 * @param baseUrl the URL to use as the page's base URL
+	 * @param historyUrl the URL to use for the page's history entry
+	 * @param encoding the encoding or charset of the HTML source text
+	 */
+	public void loadHtml(final String html, final String baseUrl, final String historyUrl, final String encoding) {
+		loadDataWithBaseURL(baseUrl, html, "text/html", encoding, historyUrl);
+	}
+
 	@SuppressLint("NewApi")
 	@SuppressWarnings("all")
 	public void onResume() {
@@ -203,6 +246,19 @@ public class AdvancedWebView extends WebView {
 	}
 
 	public void onDestroy() {
+		// try to remove this view from its parent first
+		try {
+			((ViewGroup) getParent()).removeView(this);
+		}
+		catch (Exception ignored) { }
+
+		// then try to remove all child views from this view
+		try {
+			removeAllViews();
+		}
+		catch (Exception ignored) { }
+
+		// and finally destroy this view
 		destroy();
 	}
 
@@ -215,13 +271,27 @@ public class AdvancedWebView extends WebView {
 						mFileUploadCallbackFirst = null;
 					}
 					else if (mFileUploadCallbackSecond != null) {
-						Uri[] dataUris;
+						Uri[] dataUris = null;
+
 						try {
-							dataUris = new Uri[] { Uri.parse(intent.getDataString()) };
+							if (intent.getDataString() != null) {
+								dataUris = new Uri[] { Uri.parse(intent.getDataString()) };
+							}
+							else {
+								if (Build.VERSION.SDK_INT >= 16) {
+									if (intent.getClipData() != null) {
+										final int numSelectedFiles = intent.getClipData().getItemCount();
+
+										dataUris = new Uri[numSelectedFiles];
+
+										for (int i = 0; i < numSelectedFiles; i++) {
+											dataUris[i] = intent.getClipData().getItemAt(i).getUri();
+										}
+									}
+								}
+							}
 						}
-						catch (Exception e) {
-							dataUris = null;
-						}
+						catch (Exception ignored) { }
 
 						mFileUploadCallbackSecond.onReceiveValue(dataUris);
 						mFileUploadCallbackSecond = null;
@@ -242,7 +312,9 @@ public class AdvancedWebView extends WebView {
 	}
 
 	/**
-	 * Adds an additional HTTP header that will be sent along with every request
+	 * Adds an additional HTTP header that will be sent along with every HTTP `GET` request
+	 *
+	 * This does only affect the main requests, not the requests to included resources (e.g. images)
 	 *
 	 * If you later want to delete an HTTP header that was previously added this way, call `removeHttpHeader()`
 	 *
@@ -330,8 +402,32 @@ public class AdvancedWebView extends WebView {
 		}
 	}
 
+	public void setDesktopMode(final boolean enabled) {
+		final WebSettings webSettings = getSettings();
+
+		final String newUserAgent;
+		if (enabled) {
+			newUserAgent = webSettings.getUserAgentString().replace("Mobile", "eliboM").replace("Android", "diordnA");
+		}
+		else {
+			newUserAgent = webSettings.getUserAgentString().replace("eliboM", "Mobile").replace("diordnA", "Android");
+		}
+
+		webSettings.setUserAgentString(newUserAgent);
+		webSettings.setUseWideViewPort(enabled);
+		webSettings.setLoadWithOverviewMode(enabled);
+		webSettings.setSupportZoom(enabled);
+		webSettings.setBuiltInZoomControls(enabled);
+	}
+
 	@SuppressLint({ "SetJavaScriptEnabled" })
 	protected void init(Context context) {
+		// in IDE's preview mode
+		if (isInEditMode()) {
+			// do not run the code from this method
+			return;
+		}
+
 		if (context instanceof Activity) {
 			mActivity = new WeakReference<Activity>((Activity) context);
 		}
@@ -405,22 +501,32 @@ public class AdvancedWebView extends WebView {
 			}
 
 			@Override
-			public boolean shouldOverrideUrlLoading(WebView view, String url) {
-				if (isHostnameAllowed(url)) {
-					if (mCustomWebViewClient != null) {
-						return mCustomWebViewClient.shouldOverrideUrlLoading(view, url);
-					}
-					else {
-						return false;
-					}
-				}
-				else {
+			public boolean shouldOverrideUrlLoading(final WebView view, final String url) {
+				if (!isPermittedUrl(url)) {
+					// if a listener is available
 					if (mListener != null) {
+						// inform the listener about the request
 						mListener.onExternalPageRequest(url);
 					}
 
+					// cancel the original request
 					return true;
 				}
+
+				// if there is a user-specified handler available
+				if (mCustomWebViewClient != null) {
+					// if the user-specified handler asks to override the request
+					if (mCustomWebViewClient.shouldOverrideUrlLoading(view, url)) {
+						// cancel the original request
+						return true;
+					}
+				}
+
+				// route the request through the custom URL loading method
+				view.loadUrl(url);
+
+				// cancel the original request
+				return true;
 			}
 
 			@Override
@@ -592,14 +698,22 @@ public class AdvancedWebView extends WebView {
 			// file upload callback (Android 4.1 (API level 16) -- Android 4.3 (API level 18)) (hidden method)
 			@SuppressWarnings("unused")
 			public void openFileChooser(ValueCallback<Uri> uploadMsg, String acceptType, String capture) {
-				openFileInput(uploadMsg, null);
+				openFileInput(uploadMsg, null, false);
 			}
 
 			// file upload callback (Android 5.0 (API level 21) -- current) (public method)
 			@SuppressWarnings("all")
 			public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, WebChromeClient.FileChooserParams fileChooserParams) {
-				openFileInput(null, filePathCallback);
-				return true;
+				if (Build.VERSION.SDK_INT >= 21) {
+					final boolean allowMultiple = fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+
+					openFileInput(null, filePathCallback, allowMultiple);
+
+					return true;
+				}
+				else {
+					return false;
+				}
 			}
 
 			@Override
@@ -881,9 +995,11 @@ public class AdvancedWebView extends WebView {
 		setDownloadListener(new DownloadListener() {
 
 			@Override
-			public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimetype, long contentLength) {
+			public void onDownloadStart(final String url, final String userAgent, final String contentDisposition, final String mimeType, final long contentLength) {
+				final String suggestedFilename = URLUtil.guessFileName(url, contentDisposition, mimeType);
+
 				if (mListener != null) {
-					mListener.onDownloadRequested(url, userAgent, contentDisposition, mimetype, contentLength);
+					mListener.onDownloadRequested(url, suggestedFilename, mimeType, contentLength, contentDisposition, userAgent);
 				}
 			}
 
@@ -949,21 +1065,56 @@ public class AdvancedWebView extends WebView {
 		return unique.toString();
 	}
 
-	protected boolean isHostnameAllowed(String url) {
+	public boolean isPermittedUrl(final String url) {
+		// if the permitted hostnames have not been restricted to a specific set
 		if (mPermittedHostnames.size() == 0) {
+			// all hostnames are allowed
 			return true;
 		}
 
-		url = url.replace("http://", "");
-		url = url.replace("https://", "");
+		final Uri parsedUrl = Uri.parse(url);
 
-		for (String hostname : mPermittedHostnames) {
-			if (url.startsWith(hostname)) {
+		// get the hostname of the URL that is to be checked
+		final String actualHost = parsedUrl.getHost();
+
+		// if the hostname could not be determined, usually because the URL has been invalid
+		if (actualHost == null) {
+			return false;
+		}
+
+		// if the host contains invalid characters (e.g. a backslash)
+		if (!actualHost.matches("^[a-zA-Z0-9._!~*')(;:&=+$,%\\[\\]-]*$")) {
+			// prevent mismatches between interpretations by `Uri` and `WebView`, e.g. for `http://evil.example.com\.good.example.com/`
+			return false;
+		}
+
+		// get the user information from the authority part of the URL that is to be checked
+		final String actualUserInformation = parsedUrl.getUserInfo();
+
+		// if the user information contains invalid characters (e.g. a backslash)
+		if (actualUserInformation != null && !actualUserInformation.matches("^[a-zA-Z0-9._!~*')(;:&=+$,%-]*$")) {
+			// prevent mismatches between interpretations by `Uri` and `WebView`, e.g. for `http://evil.example.com\@good.example.com/`
+			return false;
+		}
+
+		// for every hostname in the set of permitted hosts
+		for (String expectedHost : mPermittedHostnames) {
+			// if the two hostnames match or if the actual host is a subdomain of the expected host
+			if (actualHost.equals(expectedHost) || actualHost.endsWith("." + expectedHost)) {
+				// the actual hostname of the URL to be checked is allowed
 				return true;
 			}
 		}
 
+		// the actual hostname of the URL to be checked is not allowed since there were no matches
 		return false;
+	}
+
+	/**
+	 * @deprecated use `isPermittedUrl` instead
+	 */
+	protected boolean isHostnameAllowed(final String url) {
+		return isPermittedUrl(url);
 	}
 
 	protected void setLastError() {
@@ -983,35 +1134,39 @@ public class AdvancedWebView extends WebView {
 		}
 	}
 
-	/** Provides localizations for the 25 most widely spoken languages that have a ISO 639-2/T code */
+	/**
+	 * Provides localizations for the 25 most widely spoken languages that have a ISO 639-2/T code
+	 *
+	 * @return the label for the file upload prompts as a string
+	 */
 	protected String getFileUploadPromptLabel() {
 		try {
 			if (mLanguageIso3.equals("zho")) return decodeBase64("6YCJ5oup5LiA5Liq5paH5Lu2");
-			else if (mLanguageIso3.equals("spa")) return "Elija un archivo";
+			else if (mLanguageIso3.equals("spa")) return decodeBase64("RWxpamEgdW4gYXJjaGl2bw==");
 			else if (mLanguageIso3.equals("hin")) return decodeBase64("4KSP4KSVIOCkq+CkvOCkvuCkh+CksiDgpJrgpYHgpKjgpYfgpII=");
 			else if (mLanguageIso3.equals("ben")) return decodeBase64("4KaP4KaV4Kaf4Ka/IOCmq+CmvuCmh+CmsiDgpqjgpr/gprDgp43gpqzgpr7gpprgpqg=");
 			else if (mLanguageIso3.equals("ara")) return decodeBase64("2KfYrtiq2YrYp9ixINmF2YTZgSDZiNin2K3Yrw==");
-			else if (mLanguageIso3.equals("por")) return "Escolha um arquivo";
+			else if (mLanguageIso3.equals("por")) return decodeBase64("RXNjb2xoYSB1bSBhcnF1aXZv");
 			else if (mLanguageIso3.equals("rus")) return decodeBase64("0JLRi9Cx0LXRgNC40YLQtSDQvtC00LjQvSDRhNCw0LnQuw==");
 			else if (mLanguageIso3.equals("jpn")) return decodeBase64("MeODleOCoeOCpOODq+OCkumBuOaKnuOBl+OBpuOBj+OBoOOBleOBhA==");
 			else if (mLanguageIso3.equals("pan")) return decodeBase64("4KiH4Kmx4KiVIOCoq+CovuCoh+CosiDgqJrgqYHgqKPgqYs=");
-			else if (mLanguageIso3.equals("deu")) return "Wähle eine Datei";
-			else if (mLanguageIso3.equals("jav")) return "Pilih siji berkas";
-			else if (mLanguageIso3.equals("msa")) return "Pilih satu fail";
+			else if (mLanguageIso3.equals("deu")) return decodeBase64("V8OkaGxlIGVpbmUgRGF0ZWk=");
+			else if (mLanguageIso3.equals("jav")) return decodeBase64("UGlsaWggc2lqaSBiZXJrYXM=");
+			else if (mLanguageIso3.equals("msa")) return decodeBase64("UGlsaWggc2F0dSBmYWls");
 			else if (mLanguageIso3.equals("tel")) return decodeBase64("4LCS4LCVIOCwq+CxhuCxluCwsuCxjeCwqOCxgSDgsI7gsILgsJrgsYHgsJXgsYvgsILgsKHgsL8=");
 			else if (mLanguageIso3.equals("vie")) return decodeBase64("Q2jhu41uIG3hu5l0IHThuq1wIHRpbg==");
 			else if (mLanguageIso3.equals("kor")) return decodeBase64("7ZWY64KY7J2YIO2MjOydvOydhCDshKDtg50=");
-			else if (mLanguageIso3.equals("fra")) return "Choisissez un fichier";
+			else if (mLanguageIso3.equals("fra")) return decodeBase64("Q2hvaXNpc3NleiB1biBmaWNoaWVy");
 			else if (mLanguageIso3.equals("mar")) return decodeBase64("4KSr4KS+4KSH4KSyIOCkqOCkv+CkteCkoeCkvg==");
 			else if (mLanguageIso3.equals("tam")) return decodeBase64("4K6S4K6w4K+BIOCuleCvh+CuvuCuquCvjeCuquCviCDgrqTgr4fgrrDgr43grrXgr4E=");
 			else if (mLanguageIso3.equals("urd")) return decodeBase64("2KfbjNqpINmB2KfYptmEINmF24zauiDYs9uSINin2YbYqtiu2KfYqCDaqdix24zaug==");
 			else if (mLanguageIso3.equals("fas")) return decodeBase64("2LHYpyDYp9mG2KrYrtin2Kgg2qnZhtuM2K8g24zaqSDZgdin24zZhA==");
-			else if (mLanguageIso3.equals("tur")) return "Bir dosya seçin";
-			else if (mLanguageIso3.equals("ita")) return "Scegli un file";
+			else if (mLanguageIso3.equals("tur")) return decodeBase64("QmlyIGRvc3lhIHNlw6dpbg==");
+			else if (mLanguageIso3.equals("ita")) return decodeBase64("U2NlZ2xpIHVuIGZpbGU=");
 			else if (mLanguageIso3.equals("tha")) return decodeBase64("4LmA4Lil4Li34Lit4LiB4LmE4Lif4Lil4LmM4Lir4LiZ4Li24LmI4LiH");
 			else if (mLanguageIso3.equals("guj")) return decodeBase64("4KqP4KqVIOCqq+CqvuCqh+CqsuCqqOCrhyDgqqrgqrjgqoLgqqY=");
 		}
-		catch (Exception e) { }
+		catch (Exception ignored) { }
 
 		// return English translation by default
 		return "Choose a file";
@@ -1023,7 +1178,7 @@ public class AdvancedWebView extends WebView {
 	}
 
 	@SuppressLint("NewApi")
-	protected void openFileInput(final ValueCallback<Uri> fileUploadCallbackFirst, final ValueCallback<Uri[]> fileUploadCallbackSecond) {
+	protected void openFileInput(final ValueCallback<Uri> fileUploadCallbackFirst, final ValueCallback<Uri[]> fileUploadCallbackSecond, final boolean allowMultiple) {
 		if (mFileUploadCallbackFirst != null) {
 			mFileUploadCallbackFirst.onReceiveValue(null);
 		}
@@ -1036,7 +1191,14 @@ public class AdvancedWebView extends WebView {
 
 		Intent i = new Intent(Intent.ACTION_GET_CONTENT);
 		i.addCategory(Intent.CATEGORY_OPENABLE);
-		i.setType("*/*");
+
+		if (allowMultiple) {
+			if (Build.VERSION.SDK_INT >= 18) {
+				i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+			}
+		}
+
+		i.setType(mUploadableFileTypes);
 
 		if (mFragment != null && mFragment.get() != null && Build.VERSION.SDK_INT >= 11) {
 			mFragment.get().startActivityForResult(Intent.createChooser(i, getFileUploadPromptLabel()), mRequestCodeFilePicker);
@@ -1071,6 +1233,75 @@ public class AdvancedWebView extends WebView {
 		}
 		else {
 			return true;
+		}
+	}
+
+	/**
+	 * Handles a download by loading the file from `fromUrl` and saving it to `toFilename` on the external storage
+	 *
+	 * This requires the two permissions `android.permission.INTERNET` and `android.permission.WRITE_EXTERNAL_STORAGE`
+	 *
+	 * Only supported on API level 9 (Android 2.3) and above
+	 *
+	 * @param context a valid `Context` reference
+	 * @param fromUrl the URL of the file to download, e.g. the one from `AdvancedWebView.onDownloadRequested(...)`
+	 * @param toFilename the name of the destination file where the download should be saved, e.g. `myImage.jpg`
+	 * @return whether the download has been successfully handled or not
+	 * @throws IllegalStateException if the storage or the target directory could not be found or accessed
+	 */
+	@SuppressLint("NewApi")
+	public static boolean handleDownload(final Context context, final String fromUrl, final String toFilename) {
+		if (Build.VERSION.SDK_INT < 9) {
+			throw new RuntimeException("Method requires API level 9 or above");
+		}
+
+		final Request request = new Request(Uri.parse(fromUrl));
+		if (Build.VERSION.SDK_INT >= 11) {
+			request.allowScanningByMediaScanner();
+			request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+		}
+		request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, toFilename);
+
+		final DownloadManager dm = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+		try {
+			try {
+				dm.enqueue(request);
+			}
+			catch (SecurityException e) {
+				if (Build.VERSION.SDK_INT >= 11) {
+					request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
+				}
+				dm.enqueue(request);
+			}
+
+			return true;
+		}
+		// if the download manager app has been disabled on the device
+		catch (IllegalArgumentException e) {
+			// show the settings screen where the user can enable the download manager app again
+			openAppSettings(context, AdvancedWebView.PACKAGE_NAME_DOWNLOAD_MANAGER);
+
+			return false;
+		}
+	}
+
+	@SuppressLint("NewApi")
+	private static boolean openAppSettings(final Context context, final String packageName) {
+		if (Build.VERSION.SDK_INT < 9) {
+			throw new RuntimeException("Method requires API level 9 or above");
+		}
+
+		try {
+			final Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+			intent.setData(Uri.parse("package:" + packageName));
+			intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+			context.startActivity(intent);
+
+			return true;
+		}
+		catch (Exception e) {
+			return false;
 		}
 	}
 
