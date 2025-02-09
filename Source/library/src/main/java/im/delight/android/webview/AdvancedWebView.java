@@ -6,6 +6,7 @@ package im.delight.android.webview;
  * Licensed under the MIT License (https://opensource.org/licenses/MIT)
  */
 
+import android.content.ActivityNotFoundException;
 import android.view.ViewGroup;
 import android.app.DownloadManager;
 import android.app.DownloadManager.Request;
@@ -455,7 +456,10 @@ public class AdvancedWebView extends WebView {
 		if (Build.VERSION.SDK_INT < 19) {
 			webSettings.setDatabasePath(databaseDir);
 		}
-		setMixedContentAllowed(webSettings, true);
+
+		if (Build.VERSION.SDK_INT >= 21) {
+			webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+		}
 
 		setThirdPartyCookiesEnabled(true);
 
@@ -517,6 +521,47 @@ public class AdvancedWebView extends WebView {
 				if (mCustomWebViewClient != null) {
 					// if the user-specified handler asks to override the request
 					if (mCustomWebViewClient.shouldOverrideUrlLoading(view, url)) {
+						// cancel the original request
+						return true;
+					}
+				}
+
+				final Uri uri = Uri.parse(url);
+				final String scheme = uri.getScheme();
+
+				if (scheme != null) {
+					final Intent externalSchemeIntent;
+
+					if (scheme.equals("tel")) {
+						externalSchemeIntent = new Intent(Intent.ACTION_DIAL, uri);
+					}
+					else if (scheme.equals("sms")) {
+						externalSchemeIntent = new Intent(Intent.ACTION_SENDTO, uri);
+					}
+					else if (scheme.equals("mailto")) {
+						externalSchemeIntent = new Intent(Intent.ACTION_SENDTO, uri);
+					}
+					else if (scheme.equals("whatsapp")) {
+						externalSchemeIntent = new Intent(Intent.ACTION_SENDTO, uri);
+						externalSchemeIntent.setPackage("com.whatsapp");
+					}
+					else {
+						externalSchemeIntent = null;
+					}
+
+					if (externalSchemeIntent != null) {
+						externalSchemeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+						try {
+							if (mActivity != null && mActivity.get() != null) {
+								mActivity.get().startActivity(externalSchemeIntent);
+							}
+							else {
+								getContext().startActivity(externalSchemeIntent);
+							}
+						}
+						catch (ActivityNotFoundException ignored) {}
+
 						// cancel the original request
 						return true;
 					}

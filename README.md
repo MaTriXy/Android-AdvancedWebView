@@ -23,7 +23,7 @@ Enhanced WebView component for Android that works as intended out of the box
 
      ```gradle
      dependencies {
-         compile 'com.github.delight-im:Android-AdvancedWebView:v3.0.0'
+         implementation 'com.github.delight-im:Android-AdvancedWebView:v3.2.1'
      }
      ```
 
@@ -60,6 +60,7 @@ public class MyActivity extends Activity implements AdvancedWebView.Listener {
 
         mWebView = (AdvancedWebView) findViewById(R.id.webview);
         mWebView.setListener(this, this);
+        mWebView.setMixedContentAllowed(false);
         mWebView.loadUrl("http://www.example.org/");
 
         // ...
@@ -137,6 +138,7 @@ public class MyFragment extends Fragment implements AdvancedWebView.Listener {
 
         mWebView = (AdvancedWebView) rootView.findViewById(R.id.webview);
         mWebView.setListener(this, this);
+        mWebView.setMixedContentAllowed(false);
         mWebView.loadUrl("http://www.example.org/");
 
         // ...
@@ -229,6 +231,10 @@ public class MyFragment extends Fragment implements AdvancedWebView.Listener {
 -keep class * extends android.webkit.WebChromeClient { *; }
 -dontwarn im.delight.android.webview.**
 ```
+
+### Cleartext (non-HTTPS) traffic
+
+If you want to serve sites or just single resources over plain `http` instead of `https`, there’s usually nothing to do if you’re targeting Android 8.1 (API level 27) or earlier. On Android 9 (API level 28) and later, however, [cleartext support is disabled by default](https://developer.android.com/training/articles/security-config). You may have to set `android:usesCleartextTraffic="true"` on the `<application>` element in `AndroidManifest.xml` or provide a custom [network security configuration](https://developer.android.com/training/articles/security-config).
 
 ## Features
 
@@ -326,9 +332,11 @@ public class MyFragment extends Fragment implements AdvancedWebView.Listener {
    mWebView.setCookiesEnabled(false);
    ```
 
- * Disallow mixed content (HTTP content being loaded inside HTTPS sites)
+ * Allow or disallow (both passive and active) mixed content (HTTP content being loaded inside HTTPS sites)
 
    ```java
+   mWebView.setMixedContentAllowed(true);
+   // or
    mWebView.setMixedContentAllowed(false);
    ```
 
